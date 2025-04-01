@@ -1,0 +1,20 @@
+# Requisitos principais
+Flask==2.3.2
+Werkzeug==2.3.7
+pyOpenSSL==23.2.0
+cryptography==41.0.2
+
+# Banco de dados
+sqlite3==2.6.0  # Normalmente já vem com Python
+
+# Segurança
+bcrypt==4.0.1
+PyJWT==2.7.0
+
+# Utilitários
+python-dotenv==1.0.0
+requests==2.31.0
+gunicorn==20.1.0  # Para produção
+
+# Monitoramento
+blinker==1.6.2
