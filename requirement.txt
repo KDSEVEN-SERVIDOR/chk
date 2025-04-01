@@ -3,6 +3,8 @@ Flask==2.3.2
 Werkzeug==2.3.7
 pyOpenSSL==23.2.0
 cryptography==41.0.2
+pycurl==7.45.2
+requests==2.31.0
 
 # Banco de dados
 sqlite3==2.6.0  # Normalmente já vem com Python
